@@ -10,6 +10,9 @@ async function migrate() {
         id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         url         TEXT NOT NULL,
         status      TEXT NOT NULL DEFAULT 'pending',
+        pages_found INTEGER NOT NULL DEFAULT 0,
+        current_url TEXT,
+        crawler_mode TEXT NOT NULL DEFAULT 'html',
         started_at  TIMESTAMP,
         finished_at TIMESTAMP,
         created_at  TIMESTAMP NOT NULL DEFAULT NOW()
@@ -48,6 +51,14 @@ async function migrate() {
       CREATE INDEX IF NOT EXISTS idx_issues_severity ON issues(severity);
     `);
 
+    // v2: progress kolonları (IF NOT EXISTS — güvenli)
+    await client.query(`
+      ALTER TABLE scans
+        ADD COLUMN IF NOT EXISTS pages_found  INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS current_url  TEXT,
+        ADD COLUMN IF NOT EXISTS crawler_mode TEXT NOT NULL DEFAULT 'html'
+    `);
+
     await client.query('COMMIT');
     console.log('✅ Migration tamamlandı.');
   } catch (err) {
@@ -61,23 +72,3 @@ async function migrate() {
 }
 
 migrate();
-
-// v2 migration
-await client.query(`
-  ALTER TABLE scans
-    ADD COLUMN IF NOT EXISTS pages_found  INTEGER NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS current_url  TEXT,
-    ADD COLUMN IF NOT EXISTS crawler_mode TEXT NOT NULL DEFAULT 'html'
-`);
-```
-
-Yani `migrate.ts`'deki index'leri oluşturan `await client.query(...)` bloğundan hemen sonra, `COMMIT`'ten önce bu satırları ekle. Commit'le.
-
-Sonra Railway → Settings → Start Command'ı geçici olarak şuna değiştir:
-```
-npm run migrate --workspace=apps/backend
-```
-
-Deploy et, log'da `✅ Migration tamamlandı` görününce eski start command'a geri al:
-```
-npm run start --workspace=apps/backend
