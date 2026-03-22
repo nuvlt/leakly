@@ -2,6 +2,9 @@
   "name": "@ecom-analyzer/backend",
   "version": "1.0.0",
   "main": "dist/index.js",
+  "engines": {
+  "node": ">=20.0.0"
+},
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
