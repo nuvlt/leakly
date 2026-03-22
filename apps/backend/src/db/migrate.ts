@@ -61,3 +61,23 @@ async function migrate() {
 }
 
 migrate();
+
+// v2 migration
+await client.query(`
+  ALTER TABLE scans
+    ADD COLUMN IF NOT EXISTS pages_found  INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS current_url  TEXT,
+    ADD COLUMN IF NOT EXISTS crawler_mode TEXT NOT NULL DEFAULT 'html'
+`);
+```
+
+Yani `migrate.ts`'deki index'leri oluşturan `await client.query(...)` bloğundan hemen sonra, `COMMIT`'ten önce bu satırları ekle. Commit'le.
+
+Sonra Railway → Settings → Start Command'ı geçici olarak şuna değiştir:
+```
+npm run migrate --workspace=apps/backend
+```
+
+Deploy et, log'da `✅ Migration tamamlandı` görününce eski start command'a geri al:
+```
+npm run start --workspace=apps/backend
