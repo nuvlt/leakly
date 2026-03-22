@@ -97,16 +97,20 @@ router.get('/', async (_req: Request, res: Response) => {
 async function runScan(scanId: string, url: string) {
   console.log(`[Scan ${scanId}] Başlıyor: ${url}`);
 
-  const { pages, mode } = await discoverPages(url, {
-    maxPages: 200,
-    maxDepth: 3,
-    onProgress: async (currentUrl, count) => {
-      await pool.query(
-        `UPDATE scans SET pages_found = $1, current_url = $2, crawler_mode = $3 WHERE id = $4`,
-        [count, currentUrl, mode, scanId]
-      ).catch(() => {});
-    },
-  });
+ let crawlerMode = 'html';
+
+const { pages, mode } = await discoverPages(url, {
+  maxPages: 200,
+  maxDepth: 3,
+  onProgress: async (currentUrl, count) => {
+    await pool.query(
+      `UPDATE scans SET pages_found = $1, current_url = $2, crawler_mode = $3 WHERE id = $4`,
+      [count, currentUrl, crawlerMode, scanId]
+    ).catch(() => {});
+  },
+});
+
+crawlerMode = mode;
 
   for (const page of pages) {
     const pageResult = await pool.query(
