@@ -98,7 +98,7 @@ router.get('/', async (_req: Request, res: Response) => {
 async function runScan(scanId: string, url: string) {
   console.log(`[Scan ${scanId}] Başlıyor: ${url}`);
 
-  const pages = await discoverPages(url, { maxPages: 50, maxDepth: 2 });
+  const pages = await discoverPages(url, { maxPages: 500, maxDepth: 3 });
 
   for (const page of pages) {
     const pageResult = await pool.query(
