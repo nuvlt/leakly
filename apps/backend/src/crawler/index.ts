@@ -13,24 +13,51 @@ export type CrawlerMode = 'sitemap' | 'html';
 
 function classifyUrl(url: string): CrawledPage['type'] {
   const lower = url.toLowerCase();
+  const path = (() => { try { return new URL(url).pathname.toLowerCase(); } catch { return lower; } })();
+  const segments = path.split('/').filter(Boolean);
+
+  // Arama sayfası
   if (
     lower.includes('/search') || lower.includes('?q=') ||
     lower.includes('?s=') || lower.includes('/ara') ||
-    lower.includes('?query=') || lower.includes('/search-results')
+    lower.includes('?query=') || lower.includes('/search-results') ||
+    lower.includes('?keyword=') || lower.includes('/arama')
   ) return 'search';
 
+  // Ürün sayfası — çok çeşitli pattern
   if (
-    lower.includes('/product') || lower.includes('/urun') ||
-    lower.includes('/p/') || /\/[a-z0-9-]+-p-\d+/.test(lower) ||
-    lower.includes('/item/') || lower.includes('/dp/')
+    lower.includes('/product/') || lower.includes('/urun/') ||
+    lower.includes('/p/') || lower.includes('/item/') ||
+    lower.includes('/dp/') || lower.includes('/sku/') ||
+    /\/[a-z0-9-]+-p-\d+/.test(lower) ||        // trendyol: -p-12345
+    /\/[a-z0-9-]+-pd-\d+/.test(lower) ||       // hepsiburada: -pd-12345
+    /\-p\d+$/.test(path) ||                     // sonunda -p123
+    /\/\d{5,}$/.test(path) ||                   // sonunda uzun sayı ID
+    /\/[a-z0-9]{8,}-[a-z0-9-]+$/.test(path) || // UUID-like slug
+    segments.some(s => /^[a-z0-9-]+-\d{4,}$/.test(s)) // slug-1234 formatı
   ) return 'product';
 
+  // Kategori sayfası
   if (
-    lower.includes('/category') || lower.includes('/kategori') ||
-    lower.includes('/c/') || lower.includes('/collection') ||
-    lower.includes('/collections/') || lower.includes('/cat/') ||
-    lower.includes('/kadin') || lower.includes('/erkek') ||
-    lower.includes('/women') || lower.includes('/men')
+    lower.includes('/category/') || lower.includes('/kategori/') ||
+    lower.includes('/collections/') || lower.includes('/collection/') ||
+    lower.includes('/cat/') || lower.includes('/c/') ||
+    lower.includes('/department/') || lower.includes('/bolum/') ||
+    lower.includes('/liste/') || lower.includes('/list/') ||
+    lower.includes('/shop/') || lower.includes('/magaza/') ||
+    // Cinsiyet/yaş bazlı segmentler
+    /\/(kadin|erkek|cocuk|bebek|unisex)(\/|$|-)/i.test(path) ||
+    /\/(women|men|kids|baby|girl|boy)(\/|$|-)/i.test(path) ||
+    // Yaygın kategori kelimeleri path segment olarak
+    segments.some(s => [
+      'gomlek', 'pantolon', 'elbise', 'ayakkabi', 'canta', 'aksesuar',
+      'tisort', 'kazak', 'mont', 'ceket', 'etek', 'sort', 'tayt',
+      'shirts', 'pants', 'dresses', 'shoes', 'bags', 'accessories',
+      'jackets', 'coats', 'sweaters', 'skirts', 'tops', 'jeans',
+      'elektronik', 'telefon', 'bilgisayar', 'tablet', 'televizyon',
+      'mobilya', 'ev', 'mutfak', 'banyo', 'kozmetik', 'parfum',
+      'spor', 'outdoor', 'kitap', 'muzik', 'oyun', 'hobi',
+    ].includes(s))
   ) return 'category';
 
   return 'unknown';
