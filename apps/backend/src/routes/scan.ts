@@ -72,15 +72,15 @@ router.get('/:id', async (req: Request, res: Response) => {
     total_pages: pagesResult.rows.length,
     total_issues: issues.length,
     by_severity: {
-      high: issues.filter(i => i.severity === 'high').length,
-      medium: issues.filter(i => i.severity === 'medium').length,
-      low: issues.filter(i => i.severity === 'low').length,
+      high: issues.filter((i: { severity: string }) => i.severity === 'high').length,
+      medium: issues.filter((i: { severity: string }) => i.severity === 'medium').length,
+      low: issues.filter((i: { severity: string }) => i.severity === 'low').length,
     },
     by_type: {
-      broken_link: issues.filter(i => i.type === 'broken_link').length,
-      filter_inconsistency: issues.filter(i => i.type === 'filter_inconsistency').length,
-      search_quality: issues.filter(i => i.type === 'search_quality').length,
-      listing_problem: issues.filter(i => i.type === 'listing_problem').length,
+      broken_link: issues.filter((i: { type: string }) => i.type === 'broken_link').length,
+      filter_inconsistency: issues.filter((i: { type: string }) => i.type === 'filter_inconsistency').length,
+      search_quality: issues.filter((i: { type: string }) => i.type === 'search_quality').length,
+      listing_problem: issues.filter((i: { type: string }) => i.type === 'listing_problem').length,
     },
   };
 
@@ -102,7 +102,7 @@ async function runScan(scanId: string, url: string) {
   const { pages, mode } = await discoverPages(url, {
     maxPages: 200,
     maxDepth: 3,
-    onProgress: async (currentUrl, count) => {
+    onProgress: async (currentUrl: string, count: number) => {
       await pool.query(
         `UPDATE scans SET pages_found = $1, current_url = $2, crawler_mode = $3 WHERE id = $4`,
         [count, currentUrl, crawlerMode, scanId]
@@ -112,7 +112,6 @@ async function runScan(scanId: string, url: string) {
 
   crawlerMode = mode;
 
-  // Sayfaları DB'ye yaz ve kırık link tespiti yap
   for (const page of pages) {
     const pageResult = await pool.query(
       `INSERT INTO pages (scan_id, url, type, status_code)
@@ -143,8 +142,8 @@ async function runScan(scanId: string, url: string) {
 
   // Filtre tutarlılığı testi
   const categoryPages = pages
-    .filter(p => p.type === 'category')
-    .map(p => p.url);
+    .filter((p: { type: string }) => p.type === 'category')
+    .map((p: { url: string }) => p.url);
 
   if (categoryPages.length > 0) {
     console.log(`[Scan ${scanId}] Filtre testi: ${categoryPages.length} kategori sayfası bulundu`);
@@ -161,13 +160,20 @@ async function runScan(scanId: string, url: string) {
       );
       const pageId = pageRow.rows[0]?.id ?? null;
 
+      const diffCount = result.difference.onlyInFirst.length + result.difference.onlyInSecond.length;
+      const totalUnique = new Set([
+        ...result.combinations[0].productIds,
+        ...result.combinations[1].productIds,
+      ]).size;
+      const diffRatio = totalUnique > 0 ? Math.round((diffCount / totalUnique) * 100) + '%' : '0%';
+
       await pool.query(
         `INSERT INTO issues (scan_id, page_id, type, severity, description, repro_steps, metadata)
          VALUES ($1, $2, 'filter_inconsistency', 'high', $3, $4, $5)`,
         [
           scanId,
           pageId,
-          `Filtreler farklı sırada uygulandığında ürün listesi değişiyor. ${result.difference.onlyInFirst.length + result.difference.onlyInSecond.length} ürün tutarsızlığı tespit edildi.`,
+          `Filtreler farklı sırada uygulandığında ürün listesi değişiyor. ${diffCount} ürün tutarsızlığı tespit edildi.`,
           JSON.stringify([
             `${result.categoryUrl} adresini ziyaret et`,
             `Filtreleri şu sırada uygula: ${Object.keys(result.params).join(' → ')}`,
@@ -181,10 +187,7 @@ async function runScan(scanId: string, url: string) {
             combination_b: result.combinations[1].url,
             only_in_first: result.difference.onlyInFirst,
             only_in_second: result.difference.onlyInSecond,
-            diff_ratio: Math.round(
-              (result.difference.onlyInFirst.length + result.difference.onlyInSecond.length) /
-              new Set([...result.combinations[0].productIds, ...result.combinations[1].productIds]).size * 100
-            ) + '%',
+            diff_ratio: diffRatio,
           }),
         ]
       );
@@ -193,7 +196,6 @@ async function runScan(scanId: string, url: string) {
     console.log(`[Scan ${scanId}] Filtre testi tamamlandı. ${filterResults.filter(r => r.isInconsistent).length} tutarsızlık bulundu.`);
   }
 
-  // Scan tamamlandı
   await pool.query(
     `UPDATE scans SET status = 'completed', finished_at = NOW(),
      pages_found = $2, current_url = NULL WHERE id = $1`,
@@ -204,8 +206,3 @@ async function runScan(scanId: string, url: string) {
 }
 
 export default router;
-```
-
-Commit'le. Filtre testini tetiklemek için Leakly'de şöyle bir URL dene — query parametreli bir kategori sayfası:
-```
-https://www.vakkorama.com.tr/kadin?siralama=cok-satan&renk=siyah
