@@ -70,6 +70,7 @@ async function fetchSitemapUrls(baseUrl: string): Promise<string[]> {
     `${origin}/sitemaps/sitemap.xml`,
   ];
 
+  // robots.txt'den sitemap bul
   try {
     const robotsRes = await httpClient.get(`${origin}/robots.txt`);
     if (robotsRes.status === 200 && typeof robotsRes.data === 'string') {
@@ -81,44 +82,56 @@ async function fetchSitemapUrls(baseUrl: string): Promise<string[]> {
     }
   } catch {}
 
+  // XML'den URL çıkar — regex ile, namespace sorununu bypass et
+  function extractLocs(xml: string): string[] {
+    const results: string[] = [];
+    const regex = /<loc[^>]*>([\s\S]*?)<\/loc>/gi;
+    let match;
+    while ((match = regex.exec(xml)) !== null) {
+      const url = match[1].trim();
+      if (url.startsWith('http') && !results.includes(url)) {
+        results.push(url);
+      }
+    }
+    return results;
+  }
+
+  function isSitemapIndex(xml: string): boolean {
+    return xml.includes('<sitemapindex') || xml.includes('<sitemap>') || xml.includes('<sitemap ');
+  }
+
   for (const sitemapUrl of candidates) {
     try {
       const res = await httpClient.get(sitemapUrl);
       if (res.status !== 200 || typeof res.data !== 'string') continue;
 
-      const $ = cheerio.load(res.data, { xmlMode: true });
-      const urls: string[] = [];
+      const locs = extractLocs(res.data);
+      if (locs.length === 0) continue;
 
-      const subSitemapEls = $('sitemap loc').toArray();
-      if (subSitemapEls.length > 0) {
-        for (const el of subSitemapEls.slice(0, 4)) {
-          const subUrl = $(el).text().trim();
+      // Sitemap index mi?
+      if (isSitemapIndex(res.data)) {
+        const urls: string[] = [];
+        // İlk 5 alt sitemap'i çek (category, product vb. önce gelsin)
+        const subSitemaps = locs.slice(0, 5);
+        console.log(`[Crawler] Sitemap index: ${locs.length} alt sitemap bulundu, ${subSitemaps.length} tanesi işlenecek`);
+
+        for (const subUrl of subSitemaps) {
           try {
             const subRes = await httpClient.get(subUrl);
             if (subRes.status === 200 && typeof subRes.data === 'string') {
-              const $sub = cheerio.load(subRes.data, { xmlMode: true });
-              $sub('url loc').each((_, e) => {
-                const u = $sub(e).text().trim();
-                if (u && !urls.includes(u)) urls.push(u);
-              });
+              const subLocs = extractLocs(subRes.data);
+              subLocs.forEach(u => { if (!urls.includes(u)) urls.push(u); });
+              console.log(`[Crawler] ${subUrl} → ${subLocs.length} URL`);
             }
           } catch {}
         }
-        if (urls.length > 0) {
-          console.log(`[Crawler] Sitemap index: ${sitemapUrl} → ${urls.length} URL`);
-          return urls;
-        }
+
+        if (urls.length > 0) return urls;
       }
 
-      $('url loc').each((_, el) => {
-        const u = $(el).text().trim();
-        if (u && !urls.includes(u)) urls.push(u);
-      });
-
-      if (urls.length > 0) {
-        console.log(`[Crawler] Sitemap: ${sitemapUrl} → ${urls.length} URL`);
-        return urls;
-      }
+      // Normal sitemap
+      console.log(`[Crawler] Sitemap: ${sitemapUrl} → ${locs.length} URL`);
+      return locs;
     } catch {}
   }
 
