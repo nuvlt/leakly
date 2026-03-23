@@ -97,21 +97,22 @@ router.get('/', async (_req: Request, res: Response) => {
 async function runScan(scanId: string, url: string) {
   console.log(`[Scan ${scanId}] Başlıyor: ${url}`);
 
- let crawlerMode = 'html';
+  let crawlerMode = 'html';
 
-const { pages, mode } = await discoverPages(url, {
-  maxPages: 200,
-  maxDepth: 3,
-  onProgress: async (currentUrl, count) => {
-    await pool.query(
-      `UPDATE scans SET pages_found = $1, current_url = $2, crawler_mode = $3 WHERE id = $4`,
-      [count, currentUrl, crawlerMode, scanId]
-    ).catch(() => {});
-  },
-});
+  const { pages, mode } = await discoverPages(url, {
+    maxPages: 200,
+    maxDepth: 3,
+    onProgress: async (currentUrl, count) => {
+      await pool.query(
+        `UPDATE scans SET pages_found = $1, current_url = $2, crawler_mode = $3 WHERE id = $4`,
+        [count, currentUrl, crawlerMode, scanId]
+      ).catch(() => {});
+    },
+  });
 
-crawlerMode = mode;
+  crawlerMode = mode;
 
+  // Sayfaları DB'ye yaz ve kırık link tespiti yap
   for (const page of pages) {
     const pageResult = await pool.query(
       `INSERT INTO pages (scan_id, url, type, status_code)
@@ -140,6 +141,59 @@ crawlerMode = mode;
     }
   }
 
+  // Filtre tutarlılığı testi
+  const categoryPages = pages
+    .filter(p => p.type === 'category')
+    .map(p => p.url);
+
+  if (categoryPages.length > 0) {
+    console.log(`[Scan ${scanId}] Filtre testi: ${categoryPages.length} kategori sayfası bulundu`);
+
+    const { runFilterConsistencyTests } = await import('../tests/filter-consistency');
+    const filterResults = await runFilterConsistencyTests(categoryPages, 10);
+
+    for (const result of filterResults) {
+      if (!result.isInconsistent) continue;
+
+      const pageRow = await pool.query(
+        'SELECT id FROM pages WHERE scan_id = $1 AND url = $2 LIMIT 1',
+        [scanId, result.categoryUrl]
+      );
+      const pageId = pageRow.rows[0]?.id ?? null;
+
+      await pool.query(
+        `INSERT INTO issues (scan_id, page_id, type, severity, description, repro_steps, metadata)
+         VALUES ($1, $2, 'filter_inconsistency', 'high', $3, $4, $5)`,
+        [
+          scanId,
+          pageId,
+          `Filtreler farklı sırada uygulandığında ürün listesi değişiyor. ${result.difference.onlyInFirst.length + result.difference.onlyInSecond.length} ürün tutarsızlığı tespit edildi.`,
+          JSON.stringify([
+            `${result.categoryUrl} adresini ziyaret et`,
+            `Filtreleri şu sırada uygula: ${Object.keys(result.params).join(' → ')}`,
+            `Ürün listesini not et`,
+            `Filtreleri ters sırada uygula: ${Object.keys(result.params).reverse().join(' → ')}`,
+            `Ürün listesinin değiştiğini gözlemle`,
+          ]),
+          JSON.stringify({
+            params: result.params,
+            combination_a: result.combinations[0].url,
+            combination_b: result.combinations[1].url,
+            only_in_first: result.difference.onlyInFirst,
+            only_in_second: result.difference.onlyInSecond,
+            diff_ratio: Math.round(
+              (result.difference.onlyInFirst.length + result.difference.onlyInSecond.length) /
+              new Set([...result.combinations[0].productIds, ...result.combinations[1].productIds]).size * 100
+            ) + '%',
+          }),
+        ]
+      );
+    }
+
+    console.log(`[Scan ${scanId}] Filtre testi tamamlandı. ${filterResults.filter(r => r.isInconsistent).length} tutarsızlık bulundu.`);
+  }
+
+  // Scan tamamlandı
   await pool.query(
     `UPDATE scans SET status = 'completed', finished_at = NOW(),
      pages_found = $2, current_url = NULL WHERE id = $1`,
@@ -150,3 +204,8 @@ crawlerMode = mode;
 }
 
 export default router;
+```
+
+Commit'le. Filtre testini tetiklemek için Leakly'de şöyle bir URL dene — query parametreli bir kategori sayfası:
+```
+https://www.vakkorama.com.tr/kadin?siralama=cok-satan&renk=siyah
