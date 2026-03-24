@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../db/connection';
-import { discoverPages } from '../crawler';
+import { discoverPages, CrawlerMode } from '../crawler';
 
 const router = Router();
 
@@ -97,21 +97,18 @@ router.get('/', async (_req: Request, res: Response) => {
 async function runScan(scanId: string, url: string) {
   console.log(`[Scan ${scanId}] Başlıyor: ${url}`);
 
-  let crawlerMode = 'html';
-
   const { pages, mode } = await discoverPages(url, {
     maxPages: 200,
     maxDepth: 3,
-    onProgress: async (currentUrl: string, count: number) => {
+    onProgress: async (currentUrl: string, count: number, currentMode: CrawlerMode) => {
       await pool.query(
         `UPDATE scans SET pages_found = $1, current_url = $2, crawler_mode = $3 WHERE id = $4`,
-        [count, currentUrl, crawlerMode, scanId]
+        [count, currentUrl, currentMode, scanId]
       ).catch(() => {});
     },
   });
 
-  crawlerMode = mode;
-
+  // Sayfaları DB'ye yaz ve kırık link tespiti yap
   for (const page of pages) {
     const pageResult = await pool.query(
       `INSERT INTO pages (scan_id, url, type, status_code)
@@ -141,15 +138,23 @@ async function runScan(scanId: string, url: string) {
   }
 
   // Filtre tutarlılığı testi
-  const categoryPages = pages
+  const categoryPageUrls: string[] = pages
     .filter((p: { type: string }) => p.type === 'category')
     .map((p: { url: string }) => p.url);
 
-  if (categoryPages.length > 0) {
-    console.log(`[Scan ${scanId}] Filtre testi: ${categoryPages.length} kategori sayfası bulundu`);
+  // Kullanıcının verdiği URL'de query param varsa onu da ekle
+  const startUrlParamCount = (() => {
+    try { return new URL(url).searchParams.size; } catch { return 0; }
+  })();
+  if (startUrlParamCount >= 2 && !categoryPageUrls.includes(url)) {
+    categoryPageUrls.unshift(url);
+  }
+
+  if (categoryPageUrls.length > 0) {
+    console.log(`[Scan ${scanId}] Filtre testi: ${categoryPageUrls.length} kategori sayfası bulundu`);
 
     const { runFilterConsistencyTests } = await import('../tests/filter-consistency');
-    const filterResults = await runFilterConsistencyTests(categoryPages, 10);
+    const filterResults = await runFilterConsistencyTests(categoryPageUrls, 10);
 
     for (const result of filterResults) {
       if (!result.isInconsistent) continue;
@@ -165,7 +170,9 @@ async function runScan(scanId: string, url: string) {
         ...result.combinations[0].productIds,
         ...result.combinations[1].productIds,
       ]).size;
-      const diffRatio = totalUnique > 0 ? Math.round((diffCount / totalUnique) * 100) + '%' : '0%';
+      const diffRatio = totalUnique > 0
+        ? Math.round((diffCount / totalUnique) * 100) + '%'
+        : '0%';
 
       await pool.query(
         `INSERT INTO issues (scan_id, page_id, type, severity, description, repro_steps, metadata)
@@ -206,3 +213,8 @@ async function runScan(scanId: string, url: string) {
 }
 
 export default router;
+```
+
+İkisini de commit'le. Deploy olduktan sonra şunu dene:
+```
+https://www.vakkorama.com.tr/kadin?siralama=cok-satan&renk=siyah
