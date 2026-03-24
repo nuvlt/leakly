@@ -58,6 +58,16 @@ function classifyUrl(url: string): CrawledPage['type'] {
   return 'unknown';
 }
 
+// Sitemap dosya adından tip tahmin et
+function classifyBySitemapSource(sitemapUrl: string): CrawledPage['type'] | null {
+  const lower = sitemapUrl.toLowerCase();
+  if (lower.includes('category') || lower.includes('kategori') || lower.includes('collection')) return 'category';
+  if (lower.includes('product') || lower.includes('urun')) return 'product';
+  if (lower.includes('search') || lower.includes('ara')) return 'search';
+  if (lower.includes('page') || lower.includes('brand') || lower.includes('footer') || lower.includes('city')) return 'unknown';
+  return null;
+}
+
 function normalizeUrl(href: string, baseUrl: string): string | null {
   try {
     const url = new URL(href, baseUrl);
@@ -100,7 +110,12 @@ function isSitemapIndex(xml: string): boolean {
   return xml.includes('<sitemapindex') || xml.includes('<sitemap>') || xml.includes('<sitemap ');
 }
 
-async function fetchSitemapUrls(baseUrl: string): Promise<string[]> {
+interface SitemapEntry {
+  url: string;
+  sourceType: CrawledPage['type'];
+}
+
+async function fetchSitemapEntries(baseUrl: string): Promise<SitemapEntry[]> {
   const origin = new URL(baseUrl).origin;
   const candidates = [
     `${origin}/sitemap.xml`,
@@ -129,26 +144,34 @@ async function fetchSitemapUrls(baseUrl: string): Promise<string[]> {
       if (locs.length === 0) continue;
 
       if (isSitemapIndex(res.data)) {
-        const urls: string[] = [];
+        const entries: SitemapEntry[] = [];
         const subSitemaps = locs.slice(0, 5);
         console.log(`[Crawler] Sitemap index: ${locs.length} alt sitemap, ${subSitemaps.length} işlenecek`);
 
         for (const subUrl of subSitemaps) {
+          // Sitemap dosya adından tip belirle
+          const sourceType = classifyBySitemapSource(subUrl) ?? 'unknown';
+
           try {
             const subRes = await httpClient.get(subUrl);
             if (subRes.status === 200 && typeof subRes.data === 'string') {
               const subLocs = extractLocs(subRes.data);
-              subLocs.forEach(u => { if (!urls.includes(u)) urls.push(u); });
-              console.log(`[Crawler] ${subUrl} → ${subLocs.length} URL`);
+              subLocs.forEach(u => {
+                if (!entries.find(e => e.url === u)) {
+                  entries.push({ url: u, sourceType });
+                }
+              });
+              console.log(`[Crawler] ${subUrl} (${sourceType}) → ${subLocs.length} URL`);
             }
           } catch {}
         }
 
-        if (urls.length > 0) return urls;
+        if (entries.length > 0) return entries;
       }
 
+      // Normal sitemap — URL'den classify et
       console.log(`[Crawler] Sitemap: ${sitemapUrl} → ${locs.length} URL`);
-      return locs;
+      return locs.map(url => ({ url, sourceType: classifyUrl(url) }));
     } catch {}
   }
 
@@ -157,94 +180,4 @@ async function fetchSitemapUrls(baseUrl: string): Promise<string[]> {
 
 export async function crawlPage(url: string): Promise<CrawledPage | null> {
   try {
-    const response = await httpClient.get(url);
-    const contentType = String(response.headers['content-type'] || '');
-
-    if (!contentType.includes('text/html')) {
-      return { url, statusCode: response.status, type: classifyUrl(url), links: [], title: '' };
-    }
-
-    const $ = cheerio.load(response.data);
-    const links: string[] = [];
-
-    $('a[href]').each((_, el) => {
-      const href = $(el).attr('href');
-      if (!href) return;
-      const normalized = normalizeUrl(href, url);
-      if (normalized && !links.includes(normalized)) links.push(normalized);
-    });
-
-    return {
-      url,
-      statusCode: response.status,
-      type: classifyUrl(url),
-      links,
-      title: $('title').text().trim(),
-    };
-  } catch (err) {
-    console.error(`Crawl error ${url}:`, err instanceof Error ? err.message : err);
-    return null;
-  }
-}
-
-export interface DiscoverResult {
-  pages: CrawledPage[];
-  mode: CrawlerMode;
-}
-
-export async function discoverPages(
-  startUrl: string,
-  options: {
-    maxPages?: number;
-    maxDepth?: number;
-    onProgress?: (url: string, count: number, mode: CrawlerMode) => void;
-  } = {}
-): Promise<DiscoverResult> {
-  const { maxPages = 200, maxDepth = 3, onProgress } = options;
-
-  const sitemapUrls = await fetchSitemapUrls(startUrl);
-
-  if (sitemapUrls.length > 0) {
-    const pages: CrawledPage[] = [];
-    const limited = sitemapUrls.slice(0, maxPages);
-
-    for (const url of limited) {
-      onProgress?.(url, pages.length + 1, 'sitemap');
-      const page = await crawlPage(url);
-      if (page) pages.push(page);
-      await new Promise(r => setTimeout(r, 150));
-    }
-
-    return { pages, mode: 'sitemap' };
-  }
-
-  console.log(`[Crawler] HTML BFS modu`);
-  const visited = new Set<string>();
-  const results: CrawledPage[] = [];
-  const queue: Array<{ url: string; depth: number }> = [{ url: startUrl, depth: 0 }];
-
-  while (queue.length > 0 && results.length < maxPages) {
-    const item = queue.shift();
-    if (!item) break;
-    const { url, depth } = item;
-    if (visited.has(url)) continue;
-    visited.add(url);
-
-    onProgress?.(url, results.length + 1, 'html');
-    console.log(`[Crawler] BFS (d:${depth}): ${url}`);
-
-    const page = await crawlPage(url);
-    if (!page) continue;
-    results.push(page);
-
-    if (depth < maxDepth) {
-      for (const link of page.links) {
-        if (!visited.has(link)) queue.push({ url: link, depth: depth + 1 });
-      }
-    }
-
-    await new Promise(r => setTimeout(r, 300));
-  }
-
-  return { pages: results, mode: 'html' };
-}
+    cons
