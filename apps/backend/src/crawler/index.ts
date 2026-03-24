@@ -16,7 +16,6 @@ function classifyUrl(url: string): CrawledPage['type'] {
   const path = (() => { try { return new URL(url).pathname.toLowerCase(); } catch { return lower; } })();
   const segments = path.split('/').filter(Boolean);
 
-  // Arama sayfası
   if (
     lower.includes('/search') || lower.includes('?q=') ||
     lower.includes('?s=') || lower.includes('/ara') ||
@@ -24,20 +23,18 @@ function classifyUrl(url: string): CrawledPage['type'] {
     lower.includes('?keyword=') || lower.includes('/arama')
   ) return 'search';
 
-  // Ürün sayfası — çok çeşitli pattern
   if (
     lower.includes('/product/') || lower.includes('/urun/') ||
     lower.includes('/p/') || lower.includes('/item/') ||
     lower.includes('/dp/') || lower.includes('/sku/') ||
-    /\/[a-z0-9-]+-p-\d+/.test(lower) ||        // trendyol: -p-12345
-    /\/[a-z0-9-]+-pd-\d+/.test(lower) ||       // hepsiburada: -pd-12345
-    /\-p\d+$/.test(path) ||                     // sonunda -p123
-    /\/\d{5,}$/.test(path) ||                   // sonunda uzun sayı ID
-    /\/[a-z0-9]{8,}-[a-z0-9-]+$/.test(path) || // UUID-like slug
-    segments.some(s => /^[a-z0-9-]+-\d{4,}$/.test(s)) // slug-1234 formatı
+    /\/[a-z0-9-]+-p-\d+/.test(lower) ||
+    /\/[a-z0-9-]+-pd-\d+/.test(lower) ||
+    /\-p\d+$/.test(path) ||
+    /\/\d{5,}$/.test(path) ||
+    /\/[a-z0-9]{8,}-[a-z0-9-]+$/.test(path) ||
+    segments.some(s => /^[a-z0-9-]+-\d{4,}$/.test(s))
   ) return 'product';
 
-  // Kategori sayfası
   if (
     lower.includes('/category/') || lower.includes('/kategori/') ||
     lower.includes('/collections/') || lower.includes('/collection/') ||
@@ -45,10 +42,8 @@ function classifyUrl(url: string): CrawledPage['type'] {
     lower.includes('/department/') || lower.includes('/bolum/') ||
     lower.includes('/liste/') || lower.includes('/list/') ||
     lower.includes('/shop/') || lower.includes('/magaza/') ||
-    // Cinsiyet/yaş bazlı segmentler
     /\/(kadin|erkek|cocuk|bebek|unisex)(\/|$|-)/i.test(path) ||
     /\/(women|men|kids|baby|girl|boy)(\/|$|-)/i.test(path) ||
-    // Yaygın kategori kelimeleri path segment olarak
     segments.some(s => [
       'gomlek', 'pantolon', 'elbise', 'ayakkabi', 'canta', 'aksesuar',
       'tisort', 'kazak', 'mont', 'ceket', 'etek', 'sort', 'tayt',
@@ -88,6 +83,23 @@ const httpClient = axios.create({
   validateStatus: () => true,
 });
 
+function extractLocs(xml: string): string[] {
+  const results: string[] = [];
+  const regex = /<loc[^>]*>([\s\S]*?)<\/loc>/gi;
+  let match;
+  while ((match = regex.exec(xml)) !== null) {
+    const url = match[1].trim();
+    if (url.startsWith('http') && !results.includes(url)) {
+      results.push(url);
+    }
+  }
+  return results;
+}
+
+function isSitemapIndex(xml: string): boolean {
+  return xml.includes('<sitemapindex') || xml.includes('<sitemap>') || xml.includes('<sitemap ');
+}
+
 async function fetchSitemapUrls(baseUrl: string): Promise<string[]> {
   const origin = new URL(baseUrl).origin;
   const candidates = [
@@ -97,7 +109,6 @@ async function fetchSitemapUrls(baseUrl: string): Promise<string[]> {
     `${origin}/sitemaps/sitemap.xml`,
   ];
 
-  // robots.txt'den sitemap bul
   try {
     const robotsRes = await httpClient.get(`${origin}/robots.txt`);
     if (robotsRes.status === 200 && typeof robotsRes.data === 'string') {
@@ -109,24 +120,6 @@ async function fetchSitemapUrls(baseUrl: string): Promise<string[]> {
     }
   } catch {}
 
-  // XML'den URL çıkar — regex ile, namespace sorununu bypass et
-  function extractLocs(xml: string): string[] {
-    const results: string[] = [];
-    const regex = /<loc[^>]*>([\s\S]*?)<\/loc>/gi;
-    let match;
-    while ((match = regex.exec(xml)) !== null) {
-      const url = match[1].trim();
-      if (url.startsWith('http') && !results.includes(url)) {
-        results.push(url);
-      }
-    }
-    return results;
-  }
-
-  function isSitemapIndex(xml: string): boolean {
-    return xml.includes('<sitemapindex') || xml.includes('<sitemap>') || xml.includes('<sitemap ');
-  }
-
   for (const sitemapUrl of candidates) {
     try {
       const res = await httpClient.get(sitemapUrl);
@@ -135,12 +128,10 @@ async function fetchSitemapUrls(baseUrl: string): Promise<string[]> {
       const locs = extractLocs(res.data);
       if (locs.length === 0) continue;
 
-      // Sitemap index mi?
       if (isSitemapIndex(res.data)) {
         const urls: string[] = [];
-        // İlk 5 alt sitemap'i çek (category, product vb. önce gelsin)
         const subSitemaps = locs.slice(0, 5);
-        console.log(`[Crawler] Sitemap index: ${locs.length} alt sitemap bulundu, ${subSitemaps.length} tanesi işlenecek`);
+        console.log(`[Crawler] Sitemap index: ${locs.length} alt sitemap, ${subSitemaps.length} işlenecek`);
 
         for (const subUrl of subSitemaps) {
           try {
@@ -156,7 +147,6 @@ async function fetchSitemapUrls(baseUrl: string): Promise<string[]> {
         if (urls.length > 0) return urls;
       }
 
-      // Normal sitemap
       console.log(`[Crawler] Sitemap: ${sitemapUrl} → ${locs.length} URL`);
       return locs;
     } catch {}
@@ -207,7 +197,7 @@ export async function discoverPages(
   options: {
     maxPages?: number;
     maxDepth?: number;
-    onProgress?: (url: string, count: number) => void;
+    onProgress?: (url: string, count: number, mode: CrawlerMode) => void;
   } = {}
 ): Promise<DiscoverResult> {
   const { maxPages = 200, maxDepth = 3, onProgress } = options;
@@ -219,7 +209,7 @@ export async function discoverPages(
     const limited = sitemapUrls.slice(0, maxPages);
 
     for (const url of limited) {
-      onProgress?.(url, pages.length + 1);
+      onProgress?.(url, pages.length + 1, 'sitemap');
       const page = await crawlPage(url);
       if (page) pages.push(page);
       await new Promise(r => setTimeout(r, 150));
@@ -240,7 +230,7 @@ export async function discoverPages(
     if (visited.has(url)) continue;
     visited.add(url);
 
-    onProgress?.(url, results.length + 1);
+    onProgress?.(url, results.length + 1, 'html');
     console.log(`[Crawler] BFS (d:${depth}): ${url}`);
 
     const page = await crawlPage(url);
