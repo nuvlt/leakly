@@ -180,4 +180,101 @@ async function fetchSitemapEntries(baseUrl: string): Promise<SitemapEntry[]> {
 
 export async function crawlPage(url: string): Promise<CrawledPage | null> {
   try {
-    cons
+    const response = await httpClient.get(url);
+    const contentType = String(response.headers['content-type'] || '');
+
+    if (!contentType.includes('text/html')) {
+      return { url, statusCode: response.status, type: classifyUrl(url), links: [], title: '' };
+    }
+
+    const $ = cheerio.load(response.data);
+    const links: string[] = [];
+
+    $('a[href]').each((_, el) => {
+      const href = $(el).attr('href');
+      if (!href) return;
+      const normalized = normalizeUrl(href, url);
+      if (normalized && !links.includes(normalized)) links.push(normalized);
+    });
+
+    return {
+      url,
+      statusCode: response.status,
+      type: classifyUrl(url),
+      links,
+      title: $('title').text().trim(),
+    };
+  } catch (err) {
+    console.error(`Crawl error ${url}:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+export interface DiscoverResult {
+  pages: CrawledPage[];
+  mode: CrawlerMode;
+}
+
+export async function discoverPages(
+  startUrl: string,
+  options: {
+    maxPages?: number;
+    maxDepth?: number;
+    onProgress?: (url: string, count: number, mode: CrawlerMode) => void;
+  } = {}
+): Promise<DiscoverResult> {
+  const { maxPages = 200, maxDepth = 3, onProgress } = options;
+
+  const sitemapEntries = await fetchSitemapEntries(startUrl);
+
+  if (sitemapEntries.length > 0) {
+    const pages: CrawledPage[] = [];
+    const limited = sitemapEntries.slice(0, maxPages);
+
+    for (const entry of limited) {
+      onProgress?.(entry.url, pages.length + 1, 'sitemap');
+      const page = await crawlPage(entry.url);
+      if (page) {
+        // Sitemap kaynağından gelen type URL pattern'dan daha güvenilir
+        if (entry.sourceType !== 'unknown') {
+          page.type = entry.sourceType;
+        }
+        pages.push(page);
+      }
+      await new Promise(r => setTimeout(r, 150));
+    }
+
+    return { pages, mode: 'sitemap' };
+  }
+
+  // Sitemap yoksa HTML BFS
+  console.log(`[Crawler] HTML BFS modu`);
+  const visited = new Set<string>();
+  const results: CrawledPage[] = [];
+  const queue: Array<{ url: string; depth: number }> = [{ url: startUrl, depth: 0 }];
+
+  while (queue.length > 0 && results.length < maxPages) {
+    const item = queue.shift();
+    if (!item) break;
+    const { url, depth } = item;
+    if (visited.has(url)) continue;
+    visited.add(url);
+
+    onProgress?.(url, results.length + 1, 'html');
+    console.log(`[Crawler] BFS (d:${depth}): ${url}`);
+
+    const page = await crawlPage(url);
+    if (!page) continue;
+    results.push(page);
+
+    if (depth < maxDepth) {
+      for (const link of page.links) {
+        if (!visited.has(link)) queue.push({ url: link, depth: depth + 1 });
+      }
+    }
+
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  return { pages: results, mode: 'html' };
+}
