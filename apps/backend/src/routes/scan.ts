@@ -8,11 +8,11 @@ router.post('/', async (req: Request, res: Response) => {
   const { url } = req.body;
 
   if (!url || typeof url !== 'string') {
-    return res.status(400).json({ error: 'url alanı zorunludur.' });
+    return res.status(400).json({ error: 'url alani zorunludur.' });
   }
 
   try { new URL(url); } catch {
-    return res.status(400).json({ error: 'Geçerli bir URL giriniz.' });
+    return res.status(400).json({ error: 'Gecerli bir URL giriniz.' });
   }
 
   const scanResult = await pool.query(
@@ -33,7 +33,7 @@ router.post('/', async (req: Request, res: Response) => {
   return res.status(202).json({
     scan_id: scan.id,
     status: 'running',
-    message: "Scan başlatıldı. Sonuçlar için GET /api/scans/:id kullanın.",
+    message: 'Scan baslatildi.',
   });
 });
 
@@ -45,7 +45,7 @@ router.get('/:id/progress', async (req: Request, res: Response) => {
     [id]
   );
   if (result.rows.length === 0) {
-    return res.status(404).json({ error: 'Scan bulunamadı.' });
+    return res.status(404).json({ error: 'Scan bulunamadi.' });
   }
   return res.json(result.rows[0]);
 });
@@ -55,7 +55,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 
   const scanResult = await pool.query('SELECT * FROM scans WHERE id = $1', [id]);
   if (scanResult.rows.length === 0) {
-    return res.status(404).json({ error: 'Scan bulunamadı.' });
+    return res.status(404).json({ error: 'Scan bulunamadi.' });
   }
 
   const pagesResult = await pool.query(
@@ -95,7 +95,7 @@ router.get('/', async (_req: Request, res: Response) => {
 });
 
 async function runScan(scanId: string, url: string) {
-  console.log(`[Scan ${scanId}] Başlıyor: ${url}`);
+  console.log(`[Scan ${scanId}] Basliyor: ${url}`);
 
   const { pages, mode } = await discoverPages(url, {
     maxPages: 200,
@@ -108,7 +108,6 @@ async function runScan(scanId: string, url: string) {
     },
   });
 
-  // Sayfaları DB'ye yaz ve kırık link tespiti yap
   for (const page of pages) {
     const pageResult = await pool.query(
       `INSERT INTO pages (scan_id, url, type, status_code)
@@ -125,11 +124,11 @@ async function runScan(scanId: string, url: string) {
           scanId,
           pageId,
           page.statusCode === 500 ? 'high' : 'medium',
-          `${page.statusCode} hatası dönen sayfa tespit edildi.`,
+          `${page.statusCode} hatasi donen sayfa tespit edildi.`,
           JSON.stringify([
             `${url} adresini ziyaret et`,
-            `${page.url} linkine tıkla`,
-            `${page.statusCode} hata sayfası görüntülenir`,
+            `${page.url} linkine tikla`,
+            `${page.statusCode} hata sayfasi goruntulenir`,
           ]),
           JSON.stringify({ status_code: page.statusCode, affected_url: page.url }),
         ]
@@ -137,28 +136,26 @@ async function runScan(scanId: string, url: string) {
     }
   }
 
-  // Filtre tutarlılığı testi
   const categoryPageUrls: string[] = pages
     .filter((p: { type: string }) => p.type === 'category')
     .map((p: { url: string }) => p.url);
 
-  // Kullanıcının verdiği URL'de query param varsa onu da ekle
   const startUrlParamCount = (() => {
     try { return new URL(url).searchParams.size; } catch { return 0; }
   })();
+
   if (startUrlParamCount >= 2 && !categoryPageUrls.includes(url)) {
     categoryPageUrls.unshift(url);
   }
 
   if (categoryPageUrls.length > 0) {
-    console.log(`[Scan ${scanId}] Filtre testi: ${categoryPageUrls.length} kategori sayfası bulundu`);
+    console.log(`[Scan ${scanId}] Filtre testi: ${categoryPageUrls.length} kategori sayfasi`);
 
     const { runFilterConsistencyTests } = await import('../tests/filter-consistency');
     const filterResults = await runFilterConsistencyTests(categoryPageUrls, 10);
+    const inconsistent = filterResults.filter(r => r.isInconsistent);
 
-    for (const result of filterResults) {
-      if (!result.isInconsistent) continue;
-
+    for (const result of inconsistent) {
       const pageRow = await pool.query(
         'SELECT id FROM pages WHERE scan_id = $1 AND url = $2 LIMIT 1',
         [scanId, result.categoryUrl]
@@ -166,12 +163,12 @@ async function runScan(scanId: string, url: string) {
       const pageId = pageRow.rows[0]?.id ?? null;
 
       const diffCount = result.difference.onlyInFirst.length + result.difference.onlyInSecond.length;
-      const totalUnique = new Set([
+      const allIds = new Set([
         ...result.combinations[0].productIds,
         ...result.combinations[1].productIds,
-      ]).size;
-      const diffRatio = totalUnique > 0
-        ? Math.round((diffCount / totalUnique) * 100) + '%'
+      ]);
+      const diffRatio = allIds.size > 0
+        ? Math.round((diffCount / allIds.size) * 100) + '%'
         : '0%';
 
       await pool.query(
@@ -180,13 +177,13 @@ async function runScan(scanId: string, url: string) {
         [
           scanId,
           pageId,
-          `Filtreler farklı sırada uygulandığında ürün listesi değişiyor. ${diffCount} ürün tutarsızlığı tespit edildi.`,
+          `Filtreler farkli sirada uygulandiginda urun listesi degisiyor. ${diffCount} urun tutarsizligi tespit edildi.`,
           JSON.stringify([
             `${result.categoryUrl} adresini ziyaret et`,
-            `Filtreleri şu sırada uygula: ${Object.keys(result.params).join(' → ')}`,
-            `Ürün listesini not et`,
-            `Filtreleri ters sırada uygula: ${Object.keys(result.params).reverse().join(' → ')}`,
-            `Ürün listesinin değiştiğini gözlemle`,
+            `Filtreleri su sirada uygula: ${Object.keys(result.params).join(' -> ')}`,
+            `Urun listesini not et`,
+            `Filtreleri ters sirada uygula: ${Object.keys(result.params).reverse().join(' -> ')}`,
+            `Urun listesinin degistigini gozlemle`,
           ]),
           JSON.stringify({
             params: result.params,
@@ -200,7 +197,7 @@ async function runScan(scanId: string, url: string) {
       );
     }
 
-    console.log(`[Scan ${scanId}] Filtre testi tamamlandı. ${filterResults.filter(r => r.isInconsistent).length} tutarsızlık bulundu.`);
+    console.log(`[Scan ${scanId}] Filtre testi tamamlandi. ${inconsistent.length} tutarsizlik.`);
   }
 
   await pool.query(
@@ -209,12 +206,7 @@ async function runScan(scanId: string, url: string) {
     [scanId, pages.length]
   );
 
-  console.log(`[Scan ${scanId}] Tamamlandı. ${pages.length} sayfa (mod: ${mode})`);
+  console.log(`[Scan ${scanId}] Tamamlandi. ${pages.length} sayfa (mod: ${mode})`);
 }
 
 export default router;
-```
-
-İkisini de commit'le. Deploy olduktan sonra şunu dene:
-```
-https://www.vakkorama.com.tr/kadin?siralama=cok-satan&renk=siyah
