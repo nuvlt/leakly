@@ -1,7 +1,6 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import scanRouter from './routes/scan';
-import axios from 'axios';
 
 dotenv.config();
 
@@ -30,10 +29,10 @@ app.get('/api/debug/sitemap', async (req, res) => {
   if (!url) return res.status(400).json({ error: 'url gerekli' });
 
   try {
+    const axios = (await import('axios')).default;
     const origin = new URL(url).origin;
     const results: Record<string, unknown> = {};
 
-    // robots.txt
     try {
       const r = await axios.get(`${origin}/robots.txt`, {
         timeout: 8000,
@@ -46,7 +45,6 @@ app.get('/api/debug/sitemap', async (req, res) => {
       results['robots.txt'] = { error: e instanceof Error ? e.message : String(e) };
     }
 
-    // sitemap.xml
     try {
       const r = await axios.get(`${origin}/sitemap.xml`, {
         timeout: 8000,
@@ -69,14 +67,28 @@ app.get('/api/debug/sitemap', async (req, res) => {
   }
 });
 
+// Debug: filtre tutarlilik testi
+app.get('/api/debug/filter-test', async (req, res) => {
+  const url = req.query.url as string;
+  if (!url) return res.status(400).json({ error: 'url gerekli' });
+
+  try {
+    const { testFilterConsistency } = await import('./tests/filter-consistency');
+    const result = await testFilterConsistency(url);
+    return res.json(result ?? { message: 'Test yapilamadi -- yetersiz parametre veya urun' });
+  } catch (e) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 app.use('/api/scans', scanRouter);
 
 // Global error handler
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Sunucu hatası.' });
+  res.status(500).json({ error: 'Sunucu hatasi.' });
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Backend çalışıyor: http://localhost:${PORT}`);
+  console.log(`Backend calisiyor: http://localhost:${PORT}`);
 });
