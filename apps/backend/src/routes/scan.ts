@@ -98,7 +98,7 @@ async function runScan(scanId: string, url: string) {
   console.log(`[Scan ${scanId}] Basliyor: ${url}`);
 
   const { pages, mode } = await discoverPages(url, {
-    maxPages: 200,
+    maxPages: 500,
     maxDepth: 3,
     onProgress: async (currentUrl: string, count: number, currentMode: CrawlerMode) => {
       await pool.query(
