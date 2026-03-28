@@ -34,7 +34,7 @@ async function testSingleCategory(url: string): Promise<ListingProblemResult | n
     description = `Kategori sayfasi bos - hic urun bulunamadi.`;
   } else if (productCount <= 2) {
     issue = 'thin_category';
-    description = `Kategori sayfasinda cok az urun var (${productCount} urun). Eksik icerик sorunu olabilir.`;
+    description = `Kategori sayfasinda cok az urun var (${productCount} urun).`;
   }
 
   return { categoryUrl: url, productCount, issue, description };
@@ -46,7 +46,6 @@ export async function runListingProblemTests(
 ): Promise<ListingProblemResult[]> {
   const results: ListingProblemResult[] = [];
 
-  // Sadece parametresiz kategori URL'lerini test et
   const cleanUrls = categoryUrls
     .filter(url => {
       try { return new URL(url).searchParams.size === 0; } catch { return false; }
