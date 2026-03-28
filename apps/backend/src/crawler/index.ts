@@ -153,8 +153,6 @@ async function fetchSitemapEntries(baseUrl: string): Promise<SitemapEntry[]> {
 
       if (isSitemapIndex(res.data)) {
         const entries: SitemapEntry[] = [];
-
-        // Kategori sitemaplarini once isle
         const sorted = [...locs].sort((a, b) => sitemapPriority(a) - sitemapPriority(b));
         const subSitemaps = sorted.slice(0, 5);
 
@@ -166,7 +164,7 @@ async function fetchSitemapEntries(baseUrl: string): Promise<SitemapEntry[]> {
             const subRes = await httpClient.get(subUrl);
             if (subRes.status === 200 && typeof subRes.data === 'string') {
               const subLocs = extractLocs(subRes.data);
-              subLocs.forEach(u => {
+              subLocs.forEach((u: string) => {
                 if (!entries.find(e => e.url === u)) {
                   entries.push({ url: u, sourceType });
                 }
@@ -180,7 +178,7 @@ async function fetchSitemapEntries(baseUrl: string): Promise<SitemapEntry[]> {
       }
 
       console.log(`[Crawler] Sitemap: ${sitemapUrl} -> ${locs.length} URL`);
-      return locs.map(url => ({ url, sourceType: classifyUrl(url) }));
+      return locs.map((url: string) => ({ url, sourceType: classifyUrl(url) }));
     } catch {}
   }
 
@@ -199,7 +197,7 @@ export async function crawlPage(url: string): Promise<CrawledPage | null> {
     const $ = cheerio.load(response.data);
     const links: string[] = [];
 
-    $('a[href]').each((_: number, el: cheerio.Element) => {
+    $('a[href]').each((_i: number, el: cheerio.Element) => {
       const href = $(el).attr('href');
       if (!href) return;
       const normalized = normalizeUrl(href, url);
@@ -285,10 +283,3 @@ export async function discoverPages(
 
   return { pages: results, mode: 'html' };
 }
-```
-
-Commit'le. Deploy olduktan sonra log'da şunu görmen lazım:
-```
-[Crawler] Category.xml (category) -> 743 URL   ← artık ilk sırada
-[Scan ...] Filtre testi: 500 kategori sayfasi
-[ListingTest] 30 kategori sayfasi test edilecek

@@ -171,6 +171,7 @@ async function runScan(scanId: string, url: string) {
     pages.map((p: { url: string; type: string }) => ({ url: p.url, type: p.type })),
     url
   );
+
   for (const result of searchResults) {
     if (!result.issue) continue;
     await pool.query(
@@ -201,27 +202,12 @@ async function runScan(scanId: string, url: string) {
   }
   console.log(`[Scan ${scanId}] Arama testi tamamlandi. ${searchResults.filter(r => r.issue).length} sorun bulundu.`);
 
-  // Listeleme problemi testi
-  if (categoryPageUrls.length > 0) {
-    const { runListingProblemTests } = await import('../tests/listing-problem');
-    const listingResults = await runListingProblemTests(categoryPageUrls, 30);
+  // Scan tamamlandi
+  await pool.query(
+    `UPDATE scans SET status = 'completed', finished_at = NOW(), pages_found = $2, current_url = NULL WHERE id = $1`,
+    [scanId, pages.length]
+  );
+  console.log(`[Scan ${scanId}] Tamamlandi. ${pages.length} sayfa (mod: ${mode})`);
+}
 
-    for (const result of listingResults) {
-      if (!result.issue) continue;
-
-      const pageRow = await pool.query(
-        'SELECT id FROM pages WHERE scan_id = $1 AND url = $2 LIMIT 1',
-        [scanId, result.categoryUrl]
-      );
-      const pageId = pageRow.rows[0]?.id ?? null;
-
-      await pool.query(
-        `INSERT INTO issues (scan_id, page_id, type, severity, description, repro_steps, metadata)
-         VALUES ($1, $2, 'listing_problem', $3, $4, $5, $6)`,
-        [
-          scanId, pageId,
-          result.issue === 'empty_category' ? 'high' : 'medium',
-          result.description,
-          JSON.stringify([
-            `${result.categoryUrl} adresini ziyaret et`,
-            resul
+export default router;
