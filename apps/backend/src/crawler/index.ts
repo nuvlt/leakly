@@ -145,7 +145,17 @@ async function fetchSitemapEntries(baseUrl: string): Promise<SitemapEntry[]> {
 
       if (isSitemapIndex(res.data)) {
         const entries: SitemapEntry[] = [];
-        const subSitemaps = locs.slice(0, 5);
+        // Kategori sitemaplarini once isle
+const subSitemaps = [...locs].sort((a, b) => {
+  const priority = (url: string) => {
+    const lower = url.toLowerCase();
+    if (lower.includes('category') || lower.includes('kategori')) return 0;
+    if (lower.includes('product') || lower.includes('urun')) return 1;
+    if (lower.includes('page')) return 2;
+    return 3;
+  };
+  return priority(a) - priority(b);
+}).slice(0, 5);
         console.log(`[Crawler] Sitemap index: ${locs.length} alt sitemap, ${subSitemaps.length} işlenecek`);
 
         for (const subUrl of subSitemaps) {
