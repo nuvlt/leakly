@@ -197,12 +197,12 @@ export async function crawlPage(url: string): Promise<CrawledPage | null> {
     const $ = cheerio.load(response.data);
     const links: string[] = [];
 
-    $('a[href]').each((_i: number, el: Element) => {
-      const href = $(el).attr('href');
-      if (!href) return;
-      const normalized = normalizeUrl(href, url);
-      if (normalized && !links.includes(normalized)) links.push(normalized);
-    });
+ $('a[href]').each(function() {
+  const href = $(this).attr('href');
+  if (!href) return;
+  const normalized = normalizeUrl(href, url);
+  if (normalized && !links.includes(normalized)) links.push(normalized);
+});
 
     return {
       url,
