@@ -58,7 +58,6 @@ function classifyUrl(url: string): CrawledPage['type'] {
   return 'unknown';
 }
 
-// Sitemap dosya adından tip tahmin et
 function classifyBySitemapSource(sitemapUrl: string): CrawledPage['type'] | null {
   const lower = sitemapUrl.toLowerCase();
   if (lower.includes('category') || lower.includes('kategori') || lower.includes('collection')) return 'category';
@@ -66,6 +65,15 @@ function classifyBySitemapSource(sitemapUrl: string): CrawledPage['type'] | null
   if (lower.includes('search') || lower.includes('ara')) return 'search';
   if (lower.includes('page') || lower.includes('brand') || lower.includes('footer') || lower.includes('city')) return 'unknown';
   return null;
+}
+
+function sitemapPriority(url: string): number {
+  const lower = url.toLowerCase();
+  if (lower.includes('category') || lower.includes('kategori')) return 0;
+  if (lower.includes('search') || lower.includes('ara')) return 1;
+  if (lower.includes('product') || lower.includes('urun')) return 2;
+  if (lower.includes('page')) return 3;
+  return 4;
 }
 
 function normalizeUrl(href: string, baseUrl: string): string | null {
@@ -128,7 +136,7 @@ async function fetchSitemapEntries(baseUrl: string): Promise<SitemapEntry[]> {
     const robotsRes = await httpClient.get(`${origin}/robots.txt`);
     if (robotsRes.status === 200 && typeof robotsRes.data === 'string') {
       const matches = robotsRes.data.match(/Sitemap:\s*(.+)/gi) || [];
-      matches.forEach(m => {
+      matches.forEach((m: string) => {
         const u = m.replace(/Sitemap:\s*/i, '').trim();
         if (!candidates.includes(u)) candidates.unshift(u);
       });
@@ -145,23 +153,15 @@ async function fetchSitemapEntries(baseUrl: string): Promise<SitemapEntry[]> {
 
       if (isSitemapIndex(res.data)) {
         const entries: SitemapEntry[] = [];
+
         // Kategori sitemaplarini once isle
-const subSitemaps = [...locs].sort((a, b) => {
-  const priority = (url: string) => {
-    const lower = url.toLowerCase();
-    if (lower.includes('category') || lower.includes('kategori')) return 0;
-    if (lower.includes('product') || lower.includes('urun')) return 1;
-    if (lower.includes('page')) return 2;
-    return 3;
-  };
-  return priority(a) - priority(b);
-}).slice(0, 5);
-        console.log(`[Crawler] Sitemap index: ${locs.length} alt sitemap, ${subSitemaps.length} işlenecek`);
+        const sorted = [...locs].sort((a, b) => sitemapPriority(a) - sitemapPriority(b));
+        const subSitemaps = sorted.slice(0, 5);
+
+        console.log(`[Crawler] Sitemap index: ${locs.length} alt sitemap, ${subSitemaps.length} islenecek`);
 
         for (const subUrl of subSitemaps) {
-          // Sitemap dosya adından tip belirle
           const sourceType = classifyBySitemapSource(subUrl) ?? 'unknown';
-
           try {
             const subRes = await httpClient.get(subUrl);
             if (subRes.status === 200 && typeof subRes.data === 'string') {
@@ -171,7 +171,7 @@ const subSitemaps = [...locs].sort((a, b) => {
                   entries.push({ url: u, sourceType });
                 }
               });
-              console.log(`[Crawler] ${subUrl} (${sourceType}) → ${subLocs.length} URL`);
+              console.log(`[Crawler] ${subUrl} (${sourceType}) -> ${subLocs.length} URL`);
             }
           } catch {}
         }
@@ -179,8 +179,7 @@ const subSitemaps = [...locs].sort((a, b) => {
         if (entries.length > 0) return entries;
       }
 
-      // Normal sitemap — URL'den classify et
-      console.log(`[Crawler] Sitemap: ${sitemapUrl} → ${locs.length} URL`);
+      console.log(`[Crawler] Sitemap: ${sitemapUrl} -> ${locs.length} URL`);
       return locs.map(url => ({ url, sourceType: classifyUrl(url) }));
     } catch {}
   }
@@ -200,7 +199,7 @@ export async function crawlPage(url: string): Promise<CrawledPage | null> {
     const $ = cheerio.load(response.data);
     const links: string[] = [];
 
-    $('a[href]').each((_, el) => {
+    $('a[href]').each((_: number, el: cheerio.Element) => {
       const href = $(el).attr('href');
       if (!href) return;
       const normalized = normalizeUrl(href, url);
@@ -233,7 +232,7 @@ export async function discoverPages(
     onProgress?: (url: string, count: number, mode: CrawlerMode) => void;
   } = {}
 ): Promise<DiscoverResult> {
-  const { maxPages = 200, maxDepth = 3, onProgress } = options;
+  const { maxPages = 500, maxDepth = 3, onProgress } = options;
 
   const sitemapEntries = await fetchSitemapEntries(startUrl);
 
@@ -245,7 +244,6 @@ export async function discoverPages(
       onProgress?.(entry.url, pages.length + 1, 'sitemap');
       const page = await crawlPage(entry.url);
       if (page) {
-        // Sitemap kaynağından gelen type URL pattern'dan daha güvenilir
         if (entry.sourceType !== 'unknown') {
           page.type = entry.sourceType;
         }
@@ -257,7 +255,6 @@ export async function discoverPages(
     return { pages, mode: 'sitemap' };
   }
 
-  // Sitemap yoksa HTML BFS
   console.log(`[Crawler] HTML BFS modu`);
   const visited = new Set<string>();
   const results: CrawledPage[] = [];
@@ -288,3 +285,10 @@ export async function discoverPages(
 
   return { pages: results, mode: 'html' };
 }
+```
+
+Commit'le. Deploy olduktan sonra log'da şunu görmen lazım:
+```
+[Crawler] Category.xml (category) -> 743 URL   ← artık ilk sırada
+[Scan ...] Filtre testi: 500 kategori sayfasi
+[ListingTest] 30 kategori sayfasi test edilecek
