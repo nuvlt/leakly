@@ -6,67 +6,45 @@ const router = Router();
 
 router.post('/', async (req: Request, res: Response) => {
   const { url } = req.body;
-
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'url alani zorunludur.' });
   }
-
   try { new URL(url); } catch {
     return res.status(400).json({ error: 'Gecerli bir URL giriniz.' });
   }
-
   const scanResult = await pool.query(
-    `INSERT INTO scans (url, status, started_at)
-     VALUES ($1, 'running', NOW()) RETURNING *`,
+    `INSERT INTO scans (url, status, started_at) VALUES ($1, 'running', NOW()) RETURNING *`,
     [url]
   );
   const scan = scanResult.rows[0];
-
   runScan(scan.id, url).catch(err => {
     console.error(`Scan ${scan.id} failed:`, err);
-    pool.query(
-      `UPDATE scans SET status = 'failed', finished_at = NOW() WHERE id = $1`,
-      [scan.id]
-    );
+    pool.query(`UPDATE scans SET status = 'failed', finished_at = NOW() WHERE id = $1`, [scan.id]);
   });
-
-  return res.status(202).json({
-    scan_id: scan.id,
-    status: 'running',
-    message: 'Scan baslatildi.',
-  });
+  return res.status(202).json({ scan_id: scan.id, status: 'running', message: 'Scan baslatildi.' });
 });
 
 router.get('/:id/progress', async (req: Request, res: Response) => {
   const { id } = req.params;
   const result = await pool.query(
-    `SELECT id, url, status, pages_found, current_url, crawler_mode, started_at
-     FROM scans WHERE id = $1`,
+    `SELECT id, url, status, pages_found, current_url, crawler_mode, started_at FROM scans WHERE id = $1`,
     [id]
   );
-  if (result.rows.length === 0) {
-    return res.status(404).json({ error: 'Scan bulunamadi.' });
-  }
+  if (result.rows.length === 0) return res.status(404).json({ error: 'Scan bulunamadi.' });
   return res.json(result.rows[0]);
 });
 
 router.get('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-
   const scanResult = await pool.query('SELECT * FROM scans WHERE id = $1', [id]);
-  if (scanResult.rows.length === 0) {
-    return res.status(404).json({ error: 'Scan bulunamadi.' });
-  }
+  if (scanResult.rows.length === 0) return res.status(404).json({ error: 'Scan bulunamadi.' });
 
   const pagesResult = await pool.query(
-    'SELECT * FROM pages WHERE scan_id = $1 ORDER BY crawled_at',
-    [id]
+    'SELECT * FROM pages WHERE scan_id = $1 ORDER BY crawled_at', [id]
   );
   const issuesResult = await pool.query(
-    'SELECT * FROM issues WHERE scan_id = $1 ORDER BY severity DESC, created_at',
-    [id]
+    'SELECT * FROM issues WHERE scan_id = $1 ORDER BY severity DESC, created_at', [id]
   );
-
   const issues = issuesResult.rows;
   const summary = {
     total_pages: pagesResult.rows.length,
@@ -83,14 +61,11 @@ router.get('/:id', async (req: Request, res: Response) => {
       listing_problem: issues.filter((i: { type: string }) => i.type === 'listing_problem').length,
     },
   };
-
   return res.json({ scan: scanResult.rows[0], pages: pagesResult.rows, issues, summary });
 });
 
 router.get('/', async (_req: Request, res: Response) => {
-  const result = await pool.query(
-    'SELECT * FROM scans ORDER BY created_at DESC LIMIT 20'
-  );
+  const result = await pool.query('SELECT * FROM scans ORDER BY created_at DESC LIMIT 20');
   return res.json(result.rows);
 });
 
@@ -108,10 +83,10 @@ async function runScan(scanId: string, url: string) {
     },
   });
 
+  // Sayfalari DB ye yaz + kirik link tespiti
   for (const page of pages) {
     const pageResult = await pool.query(
-      `INSERT INTO pages (scan_id, url, type, status_code)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
+      `INSERT INTO pages (scan_id, url, type, status_code) VALUES ($1, $2, $3, $4) RETURNING id`,
       [scanId, page.url, page.type, page.statusCode]
     );
     const pageId = pageResult.rows[0]?.id;
@@ -121,8 +96,7 @@ async function runScan(scanId: string, url: string) {
         `INSERT INTO issues (scan_id, page_id, type, severity, description, repro_steps, metadata)
          VALUES ($1, $2, 'broken_link', $3, $4, $5, $6)`,
         [
-          scanId,
-          pageId,
+          scanId, pageId,
           page.statusCode === 500 ? 'high' : 'medium',
           `${page.statusCode} hatasi donen sayfa tespit edildi.`,
           JSON.stringify([
@@ -136,6 +110,7 @@ async function runScan(scanId: string, url: string) {
     }
   }
 
+  // Filtre tutarliligi testi
   const categoryPageUrls: string[] = pages
     .filter((p: { type: string }) => p.type === 'category')
     .map((p: { url: string }) => p.url);
@@ -143,14 +118,12 @@ async function runScan(scanId: string, url: string) {
   const startUrlParamCount = (() => {
     try { return new URL(url).searchParams.size; } catch { return 0; }
   })();
-
   if (startUrlParamCount >= 2 && !categoryPageUrls.includes(url)) {
     categoryPageUrls.unshift(url);
   }
 
   if (categoryPageUrls.length > 0) {
     console.log(`[Scan ${scanId}] Filtre testi: ${categoryPageUrls.length} kategori sayfasi`);
-
     const { runFilterConsistencyTests } = await import('../tests/filter-consistency');
     const filterResults = await runFilterConsistencyTests(categoryPageUrls, 10);
     const inconsistent = filterResults.filter(r => r.isInconsistent);
@@ -161,22 +134,15 @@ async function runScan(scanId: string, url: string) {
         [scanId, result.categoryUrl]
       );
       const pageId = pageRow.rows[0]?.id ?? null;
-
       const diffCount = result.difference.onlyInFirst.length + result.difference.onlyInSecond.length;
-      const allIds = new Set([
-        ...result.combinations[0].productIds,
-        ...result.combinations[1].productIds,
-      ]);
-      const diffRatio = allIds.size > 0
-        ? Math.round((diffCount / allIds.size) * 100) + '%'
-        : '0%';
+      const allIds = new Set([...result.combinations[0].productIds, ...result.combinations[1].productIds]);
+      const diffRatio = allIds.size > 0 ? Math.round((diffCount / allIds.size) * 100) + '%' : '0%';
 
       await pool.query(
         `INSERT INTO issues (scan_id, page_id, type, severity, description, repro_steps, metadata)
          VALUES ($1, $2, 'filter_inconsistency', 'high', $3, $4, $5)`,
         [
-          scanId,
-          pageId,
+          scanId, pageId,
           `Filtreler farkli sirada uygulandiginda urun listesi degisiyor. ${diffCount} urun tutarsizligi tespit edildi.`,
           JSON.stringify([
             `${result.categoryUrl} adresini ziyaret et`,
@@ -196,16 +162,51 @@ async function runScan(scanId: string, url: string) {
         ]
       );
     }
-
     console.log(`[Scan ${scanId}] Filtre testi tamamlandi. ${inconsistent.length} tutarsizlik.`);
   }
 
-  await pool.query(
-    `UPDATE scans SET status = 'completed', finished_at = NOW(),
-     pages_found = $2, current_url = NULL WHERE id = $1`,
-    [scanId, pages.length]
+  // Arama kalitesi testi
+  const { runSearchQualityTests } = await import('../tests/search-quality');
+  const searchResults = await runSearchQualityTests(
+    pages.map((p: { url: string; type: string }) => ({ url: p.url, type: p.type })),
+    url
   );
 
+  for (const result of searchResults) {
+    if (!result.issue) continue;
+    await pool.query(
+      `INSERT INTO issues (scan_id, page_id, type, severity, description, repro_steps, metadata)
+       VALUES ($1, $2, 'search_quality', $3, $4, $5, $6)`,
+      [
+        scanId, null,
+        result.testType === 'nonsense_query' ? 'medium' : 'low',
+        result.issue,
+        JSON.stringify([
+          `${url} adresine git`,
+          `Arama kutusuna "${result.keyword}" yaz`,
+          `Arama sonuclarini incele`,
+          result.testType === 'empty_query'
+            ? 'Bos sonuc sayfasi goruntuleniyor'
+            : result.testType === 'nonsense_query'
+            ? `${result.productCount} alakasiz urun listeleniyor`
+            : 'Hic sonuc donmuyor',
+        ]),
+        JSON.stringify({
+          search_url: result.searchUrl,
+          keyword: result.keyword,
+          test_type: result.testType,
+          product_count: result.productCount,
+        }),
+      ]
+    );
+  }
+  console.log(`[Scan ${scanId}] Arama testi tamamlandi. ${searchResults.filter(r => r.issue).length} sorun bulundu.`);
+
+  // Scan tamamlandi
+  await pool.query(
+    `UPDATE scans SET status = 'completed', finished_at = NOW(), pages_found = $2, current_url = NULL WHERE id = $1`,
+    [scanId, pages.length]
+  );
   console.log(`[Scan ${scanId}] Tamamlandi. ${pages.length} sayfa (mod: ${mode})`);
 }
 
