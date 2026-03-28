@@ -197,7 +197,7 @@ export async function crawlPage(url: string): Promise<CrawledPage | null> {
     const $ = cheerio.load(response.data);
     const links: string[] = [];
 
-    $('a[href]').each((_i: number, el: cheerio.Element) => {
+    $('a[href]').each((_i: number, el: Element) => {
       const href = $(el).attr('href');
       if (!href) return;
       const normalized = normalizeUrl(href, url);
