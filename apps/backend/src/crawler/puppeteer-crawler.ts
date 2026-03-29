@@ -53,17 +53,14 @@ async function getBrowserExecutablePath(): Promise<string> {
     const execPath = await chromium.default.executablePath();
     return execPath;
   } catch {
-    // Fallback for local dev
+    const fsMod = await import('fs');
     const paths = [
       '/usr/bin/google-chrome',
       '/usr/bin/chromium-browser',
       '/usr/bin/chromium',
     ];
     for (const p of paths) {
-      try {
-        const fs = await import('fs');
-        if (fs.existsSync(p)) return p;
-      } catch {}
+      if (fsMod.existsSync(p)) return p;
     }
     throw new Error('Chrome/Chromium bulunamadi');
   }
@@ -91,87 +88,69 @@ export async function crawlPageWithPuppeteer(url: string): Promise<PuppeteerPage
     });
 
     const page = await browser.newPage();
-
     await page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
     );
-
     await page.setViewport({ width: 1280, height: 800 });
 
     let statusCode = 200;
-    page.on('response', response => {
+    page.on('response', (response: { url: () => string; status: () => number }) => {
       if (response.url() === url) {
         statusCode = response.status();
       }
     });
 
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
-
-    // JS render tamamlansin diye 1sn bekle
     await new Promise(r => setTimeout(r, 1000));
 
     const title = await page.title();
 
-    // Tum linkleri topla
-    const links = await page.evaluate((baseUrl: string) => {
-      const anchors = Array.from(document.querySelectorAll('a[href]'));
-      const origin = new URL(baseUrl).origin;
-      const seen = new Set<string>();
-      const result: string[] = [];
+    const safeUrl = url.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const links: string[] = await page.evaluate(
+      `(function(baseUrl) {
+        var anchors = Array.from(document.querySelectorAll('a[href]'));
+        var origin = new URL(baseUrl).origin;
+        var seen = {};
+        var result = [];
+        for (var i = 0; i < anchors.length; i++) {
+          try {
+            var href = anchors[i].href;
+            if (!href) continue;
+            var u = new URL(href);
+            if (u.origin !== origin) continue;
+            if (u.pathname.match(/\\.(jpg|jpeg|png|gif|svg|webp|css|js|ico|pdf|zip)$/i)) continue;
+            u.hash = '';
+            var norm = u.toString();
+            if (!seen[norm]) { seen[norm] = true; result.push(norm); }
+          } catch(e) {}
+        }
+        return result;
+      })('${safeUrl}')`
+    ) as string[];
 
-      for (const a of anchors) {
-        try {
-          const href = (a as HTMLAnchorElement).href;
-          if (!href) continue;
-          const u = new URL(href);
-          if (u.origin !== origin) continue;
-          if (u.pathname.match(/\.(jpg|jpeg|png|gif|svg|webp|css|js|ico|pdf|zip)$/i)) continue;
-          u.hash = '';
-          const normalized = u.toString();
-          if (!seen.has(normalized)) {
-            seen.add(normalized);
-            result.push(normalized);
-          }
-        } catch {}
-      }
-      return result;
-    }, url);
-
-    return {
-      url,
-      statusCode,
-      type: classifyUrl(url),
-      links,
-      title,
-    };
+    return { url, statusCode, type: classifyUrl(url), links, title };
   } catch (err) {
     console.error(`[Puppeteer] Crawl error ${url}:`, err instanceof Error ? err.message : err);
     return null;
   } finally {
     if (browser) {
-      try { await browser.close(); } catch {}
+      try { await (browser as { close: () => Promise<void> }).close(); } catch {}
     }
   }
 }
 
-// Birden fazla sayfayi sirasyla tara (memory icin tek tek)
 export async function crawlPagesWithPuppeteer(
   urls: string[],
   onProgress?: (url: string, count: number) => void
 ): Promise<PuppeteerPage[]> {
   const results: PuppeteerPage[] = [];
-
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i];
     onProgress?.(url, i + 1);
     console.log(`[Puppeteer] Taraniyor (${i + 1}/${urls.length}): ${url}`);
-
     const page = await crawlPageWithPuppeteer(url);
     if (page) results.push(page);
-
-    // Her sayfadan sonra biraz bekle (memory temizlensin)
     await new Promise(r => setTimeout(r, 500));
   }
-
   return results;
 }
