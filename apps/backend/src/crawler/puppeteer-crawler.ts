@@ -49,20 +49,14 @@ function classifyUrl(url: string): PuppeteerPage['type'] {
 
 async function getBrowserExecutablePath(): Promise<string> {
   try {
-    const chromium = await import('@sparticuz/chromium');
-    const execPath = await chromium.default.executablePath();
+    const chromium = await import('@sparticuz/chromium-min');
+    const execPath = await chromium.default.executablePath(
+      'https://github.com/Sparticuz/chromium/releases/download/v119.0.0/chromium-v119.0.0-pack.tar'
+    );
     return execPath;
-  } catch {
-    const fsMod = await import('fs');
-    const paths = [
-      '/usr/bin/google-chrome',
-      '/usr/bin/chromium-browser',
-      '/usr/bin/chromium',
-    ];
-    for (const p of paths) {
-      if (fsMod.existsSync(p)) return p;
-    }
-    throw new Error('Chrome/Chromium bulunamadi');
+  } catch (err) {
+    console.error('[Puppeteer] Chromium path error:', err);
+    throw new Error('Chromium bulunamadi');
   }
 }
 
