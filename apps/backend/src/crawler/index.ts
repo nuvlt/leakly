@@ -197,12 +197,12 @@ export async function crawlPage(url: string): Promise<CrawledPage | null> {
     const $ = cheerio.load(response.data);
     const links: string[] = [];
 
- $('a[href]').each(function() {
-  const href = $(this).attr('href');
-  if (!href) return;
-  const normalized = normalizeUrl(href, url);
-  if (normalized && !links.includes(normalized)) links.push(normalized);
-});
+    $('a[href]').each((_i: number, el: cheerio.Element) => {
+      const href = $(el).attr('href');
+      if (!href) return;
+      const normalized = normalizeUrl(href, url);
+      if (normalized && !links.includes(normalized)) links.push(normalized);
+    });
 
     return {
       url,
@@ -282,4 +282,76 @@ export async function discoverPages(
   }
 
   return { pages: results, mode: 'html' };
+}
+
+// Puppeteer fallback — JS-render siteler icin
+export async function discoverPagesWithFallback(
+  startUrl: string,
+  options: {
+    maxPages?: number;
+    maxDepth?: number;
+    onProgress?: (url: string, count: number, mode: CrawlerMode) => void;
+  } = {}
+): Promise<DiscoverResult> {
+  const { maxPages = 500, onProgress } = options;
+
+  // Once normal crawler dene
+  const result = await discoverPages(startUrl, options);
+
+  // Yeterli link bulunduysa Puppeteer'a gerek yok
+  if (result.pages.length >= 10) {
+    return result;
+  }
+
+  // Az link geldiyse Puppeteer devreye girsin
+  console.log(`[Crawler] Az sayfa bulundu (${result.pages.length}), Puppeteer fallback basliyor...`);
+
+  try {
+    const { crawlPageWithPuppeteer } = await import('./puppeteer-crawler');
+
+    // Oncelikle ana sayfayi Puppeteer ile tara, linkleri topla
+    const mainPage = await crawlPageWithPuppeteer(startUrl);
+    if (!mainPage) return result;
+
+    onProgress?.(startUrl, 1, 'sitemap');
+
+    const pages: CrawledPage[] = [{
+      url: mainPage.url,
+      statusCode: mainPage.statusCode,
+      type: mainPage.type,
+      links: mainPage.links,
+      title: mainPage.title,
+    }];
+
+    // Bulunan linklerden kategori ve urun sayfalarini sec
+    const priorityLinks = mainPage.links
+      .filter(link => {
+        const t = classifyUrl(link);
+        return t === 'category' || t === 'product';
+      })
+      .slice(0, maxPages - 1);
+
+    let count = 1;
+    for (const link of priorityLinks) {
+      count++;
+      onProgress?.(link, count, 'sitemap');
+      const page = await crawlPageWithPuppeteer(link);
+      if (page) {
+        pages.push({
+          url: page.url,
+          statusCode: page.statusCode,
+          type: page.type,
+          links: page.links,
+          title: page.title,
+        });
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    console.log(`[Crawler] Puppeteer fallback tamamlandi: ${pages.length} sayfa`);
+    return { pages, mode: 'sitemap' };
+  } catch (err) {
+    console.error('[Crawler] Puppeteer fallback basarisiz:', err instanceof Error ? err.message : err);
+    return result;
+  }
 }
