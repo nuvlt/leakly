@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../db/connection';
-import { discoverPages, CrawlerMode } from '../crawler';
+import { discoverPagesWithFallback, CrawlerMode } from '../crawler';
 
 const router = Router();
 
@@ -72,7 +72,7 @@ router.get('/', async (_req: Request, res: Response) => {
 async function runScan(scanId: string, url: string) {
   console.log(`[Scan ${scanId}] Basliyor: ${url}`);
 
-  const { pages, mode } = await discoverPages(url, {
+  const { pages, mode } = await discoverPagesWithFallback(url, {
     maxPages: 500,
     maxDepth: 3,
     onProgress: async (currentUrl: string, count: number, currentMode: CrawlerMode) => {
@@ -127,7 +127,7 @@ async function runScan(scanId: string, url: string) {
     console.log(`[Scan ${scanId}] Filtre testi: ${categoryPageUrls.length} kategori sayfasi`);
     const { runFilterConsistencyTests } = await import('../tests/filter-consistency');
     const filterResults = await runFilterConsistencyTests(categoryPageUrls, 10);
-    const inconsistent = filterResults.filter(r => r.isInconsistent);
+    const inconsistent = filterResults.filter((r: { isInconsistent: boolean }) => r.isInconsistent);
 
     for (const result of inconsistent) {
       const pageRow = await pool.query(
@@ -200,7 +200,7 @@ async function runScan(scanId: string, url: string) {
       ]
     );
   }
-  console.log(`[Scan ${scanId}] Arama testi tamamlandi. ${searchResults.filter(r => r.issue).length} sorun bulundu.`);
+  console.log(`[Scan ${scanId}] Arama testi tamamlandi. ${searchResults.filter((r: { issue: string | null }) => r.issue).length} sorun bulundu.`);
 
   // Listeleme problemi testi
   if (categoryPageUrls.length > 0) {
@@ -236,7 +236,7 @@ async function runScan(scanId: string, url: string) {
         ]
       );
     }
-    console.log(`[Scan ${scanId}] Listeleme testi tamamlandi. ${listingResults.filter(r => r.issue).length} sorun bulundu.`);
+    console.log(`[Scan ${scanId}] Listeleme testi tamamlandi. ${listingResults.filter((r: { issue: string | null }) => r.issue).length} sorun bulundu.`);
   }
 
   // Scan tamamlandi
