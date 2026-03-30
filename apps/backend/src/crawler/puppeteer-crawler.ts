@@ -1,4 +1,5 @@
-import puppeteerCore from 'puppeteer-core';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const puppeteer = require('puppeteer-core');
 
 export interface PuppeteerPage {
   url: string;
@@ -13,60 +14,50 @@ function classifyUrl(url: string): PuppeteerPage['type'] {
   const path = (() => { try { return new URL(url).pathname.toLowerCase(); } catch { return lower; } })();
   const segments = path.split('/').filter(Boolean);
 
-  if (
-    lower.includes('/search') || lower.includes('?q=') ||
-    lower.includes('?s=') || lower.includes('/ara') ||
-    lower.includes('?query=') || lower.includes('?keyword=')
-  ) return 'search';
-
-  if (
-    lower.includes('/product/') || lower.includes('/urun/') ||
-    lower.includes('/p/') || lower.includes('/item/') ||
-    lower.includes('/dp/') || lower.includes('/sku/') ||
-    /\/[a-z0-9-]+-p-\d+/.test(lower) ||
-    /\/[a-z0-9-]+-pd-\d+/.test(lower) ||
-    /\/\d{5,}$/.test(path) ||
-    segments.some(s => /^[a-z0-9-]+-\d{4,}$/.test(s))
-  ) return 'product';
-
-  if (
-    lower.includes('/category/') || lower.includes('/kategori/') ||
-    lower.includes('/collections/') || lower.includes('/collection/') ||
-    lower.includes('/cat/') || lower.includes('/c/') ||
-    lower.includes('/shop/') || lower.includes('/magaza/') ||
-    /\/(kadin|erkek|cocuk|bebek)(\/|$|-)/i.test(path) ||
-    /\/(women|men|kids|baby)(\/|$|-)/i.test(path) ||
-    segments.some(s => [
-      'gomlek', 'pantolon', 'elbise', 'ayakkabi', 'canta', 'aksesuar',
-      'tisort', 'kazak', 'mont', 'ceket', 'etek', 'sort', 'tayt',
-      'shirts', 'pants', 'dresses', 'shoes', 'bags', 'accessories',
-      'jackets', 'coats', 'sweaters', 'skirts', 'tops', 'jeans',
-    ].includes(s))
-  ) return 'category';
-
+  if (lower.includes('/search') || lower.includes('?q=') || lower.includes('?s=') || lower.includes('/ara') || lower.includes('?query=') || lower.includes('?keyword=')) return 'search';
+  if (lower.includes('/product/') || lower.includes('/urun/') || lower.includes('/p/') || lower.includes('/item/') || lower.includes('/dp/') || /\/[a-z0-9-]+-p-\d+/.test(lower) || /\/[a-z0-9-]+-pd-\d+/.test(lower) || /\/\d{5,}$/.test(path) || segments.some(s => /^[a-z0-9-]+-\d{4,}$/.test(s))) return 'product';
+  if (lower.includes('/category/') || lower.includes('/kategori/') || lower.includes('/collections/') || lower.includes('/cat/') || lower.includes('/shop/') || /\/(kadin|erkek|cocuk|bebek)(\/|$|-)/i.test(path) || /\/(women|men|kids|baby)(\/|$|-)/i.test(path)) return 'category';
   return 'unknown';
 }
 
-async function getBrowserExecutablePath(): Promise<string> {
-  try {
-    const chromium = await import('@sparticuz/chromium-min');
-    const execPath = await chromium.default.executablePath(
-      'https://github.com/Sparticuz/chromium/releases/download/v119.0.0/chromium-v119.0.0-pack.tar'
-    );
-    return execPath;
-  } catch (err) {
-    console.error('[Puppeteer] Chromium path error:', err);
-    throw new Error('Chromium bulunamadi');
+async function findChromiumPath(): Promise<string> {
+  const { execSync } = await import('child_process');
+  const candidates = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/local/bin/chromium',
+    '/run/current-system/sw/bin/chromium',
+  ];
+
+  for (const p of candidates) {
+    try {
+      const fs = await import('fs');
+      if (fs.existsSync(p)) {
+        console.log(`[Puppeteer] Chromium found: ${p}`);
+        return p;
+      }
+    } catch {}
   }
+
+  try {
+    const result = execSync('which google-chrome chromium chromium-browser 2>/dev/null', { encoding: 'utf8' });
+    const found = result.trim().split('\n')[0];
+    if (found) {
+      console.log(`[Puppeteer] Chromium found via which: ${found}`);
+      return found;
+    }
+  } catch {}
+
+  throw new Error('No Chromium found on system');
 }
 
 export async function crawlPageWithPuppeteer(url: string): Promise<PuppeteerPage | null> {
   let browser = null;
-
   try {
-    const executablePath = await getBrowserExecutablePath();
+    const executablePath = await findChromiumPath();
 
-    browser = await puppeteerCore.launch({
+    browser = await puppeteer.launch({
       executablePath,
       headless: true,
       args: [
@@ -82,24 +73,20 @@ export async function crawlPageWithPuppeteer(url: string): Promise<PuppeteerPage
     });
 
     const page = await browser.newPage();
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
-    );
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
     await page.setViewport({ width: 1280, height: 800 });
 
     let statusCode = 200;
     page.on('response', (response: { url: () => string; status: () => number }) => {
-      if (response.url() === url) {
-        statusCode = response.status();
-      }
+      if (response.url() === url) statusCode = response.status();
     });
 
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
     await new Promise(r => setTimeout(r, 1000));
 
     const title = await page.title();
-
     const safeUrl = url.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
     const links: string[] = await page.evaluate(
       `(function(baseUrl) {
         var anchors = Array.from(document.querySelectorAll('a[href]'));
@@ -128,7 +115,7 @@ export async function crawlPageWithPuppeteer(url: string): Promise<PuppeteerPage
     return null;
   } finally {
     if (browser) {
-      try { await (browser as { close: () => Promise<void> }).close(); } catch {}
+      try { await browser.close(); } catch {}
     }
   }
 }
