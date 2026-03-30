@@ -81,6 +81,25 @@ app.get('/api/debug/filter-test', async (req, res) => {
   }
 });
 
+app.get('/api/debug/chromium', async (_req, res) => {
+  const { execSync } = await import('child_process');
+  const results: Record<string, string> = {};
+  
+  try {
+    results['which'] = execSync('which chromium chromium-browser google-chrome 2>/dev/null || echo "not found"', { encoding: 'utf8' }).trim();
+  } catch { results['which'] = 'error'; }
+  
+  try {
+    results['find'] = execSync('find /nix /usr /run -name "chromium*" -type f 2>/dev/null | head -5', { encoding: 'utf8' }).trim();
+  } catch { results['find'] = 'error'; }
+  
+  try {
+    results['env'] = execSync('env | grep -i chrom 2>/dev/null || echo "none"', { encoding: 'utf8' }).trim();
+  } catch { results['env'] = 'error'; }
+
+  return res.json(results);
+});
+
 app.use('/api/scans', scanRouter);
 
 // Global error handler
